@@ -1,0 +1,28 @@
+# Meter profiles (proposal §9.2 "meters") + pipeline settings.
+# In production these come from the Phase 0 site survey (meter_profile.yaml).
+settings:
+  # Readings below this OCR confidence go to the review queue (§6.3 τ)
+  confidence_threshold: 0.90
+  # Implied average power may exceed sanctioned load by this factor (§7.2)
+  rate_headroom: 1.5
+  # Expected capture interval, minutes (drives the data-gap alert)
+  interval_minutes: 15
+meters:
+  msedcl-DEMO-001:
+    name: "Main incomer"
+    device_id: edge-demo-01
+    sanctioned_kw: 500
+    register_fullscale: 1000000
+    cycle_anchor_day: 1
+  msedcl-DEMO-002:
+    name: "Compressor house"
+    device_id: edge-demo-02
+    sanctioned_kw: 400
+    register_fullscale: 1000000
+    cycle_anchor_day: 1
+  msedcl-DEMO-003:
+    name: "Casting shop (over-compensated)"
+    device_id: edge-demo-03
+    sanctioned_kw: 300
+    register_fullscale: 1000000
+    cycle_anchor_day: 1

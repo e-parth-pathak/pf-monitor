@@ -1,0 +1,18 @@
+# Tariff configuration — regulatory parameters live HERE, never in code
+# (proposal §2.3–2.4). Populate every placeholder from the consumer's
+# actual bill and the in-force MERC tariff order during Phase 0.
+version: "demo-2026-04"
+utility: MSEDCL
+# kvah  = billed on kVAh (HT since 1 Apr 2020; LT >20 kW since 1 Apr 2025,
+#         MERC Case 217/2024, upheld in Case 75/2025)
+# kwh_with_pf = kWh billing with a separate PF incentive/penalty line
+billing_basis: kvah
+# PLACEHOLDER demo rate — replace with the rate from the current tariff order.
+energy_rate_inr_per_kvah: 8.50
+pf_rules:
+  # MSEDCL methodology (Dec 2018, MTR Order Case 195/2017):
+  # PF = kWh / sqrt(kWh^2 + (RkVAh_lag + RkVAh_lead)^2)
+  penalty_below: 0.90
+  incentive_above: 0.95
+  # Commercial Circular 312: no incentive when RkVAh_lead > RkVAh_lag
+  no_incentive_if_lead_dominant: true

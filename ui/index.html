@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PF Monitor</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="logo">PF</span>
+    <div>
+      <h1>PF Monitor</h1>
+      <div class="tagline">Power-factor &amp; tariff monitoring &mdash; MSEDCL/MERC rules</div>
+    </div>
+  </div>
+  <nav id="tabs">
+    <button data-tab="dashboard" class="active">Dashboard</button>
+    <button data-tab="review">Review queue <span class="badge" id="badge-review"></span></button>
+    <button data-tab="alerts">Alerts <span class="badge" id="badge-alerts"></span></button>
+    <button data-tab="config">Config</button>
+  </nav>
+  <button id="btn-simulate" class="primary" title="Generate 35 days of simulated meter data through the real ingest pipeline">Load demo data</button>
+</header>
+
+<main>
+  <section id="tab-dashboard" class="tab active">
+    <div id="meter-picker" class="meter-picker"></div>
+    <div id="dash-empty" class="empty hidden">
+      <h2>No readings yet</h2>
+      <p>This app implements the server side of the PF monitoring system:
+         ingest &rarr; validation &rarr; PF/tariff engine &rarr; dashboards,
+         review queue and alerts. In the field, readings arrive from the
+         camera edge agents; here, press the button to generate 35 days of
+         simulated meter data through the same ingest pipeline.</p>
+      <button class="primary big" onclick="runSimulation()">Load demo data (35 days, 3 meters)</button>
+    </div>
+    <div id="dash-body" class="hidden">
+      <div class="tiles" id="tiles"></div>
+      <div class="charts">
+        <div class="card">
+          <h3>Daily power factor <span class="sub">PF = &Delta;kWh / &radic;(&Delta;kWh&sup2; + (&Sigma;&Delta;RkVAh)&sup2;)</span></h3>
+          <div id="chart-pf"></div>
+        </div>
+        <div class="card">
+          <h3>Daily cost of poor PF <span class="sub">(&Delta;kVAh &minus; &Delta;kWh) &times; rate</span></h3>
+          <div id="chart-excess"></div>
+        </div>
+      </div>
+      <div class="card" id="capacitor-card">
+        <h3>Capacitor sizing guidance <span class="sub">Q = P (tan&thinsp;&phi;&#8321; &minus; tan&thinsp;&phi;&#8322;) &mdash; for your electrical consultant</span></h3>
+        <div class="cap-row">
+          <label>Average load <input id="cap-p" type="number" min="1" step="1"> kW</label>
+          <label>Current PF <input id="cap-from" type="number" min="0.5" max="0.999" step="0.001"></label>
+          <label>Target PF <input id="cap-to" type="number" min="0.5" max="1" step="0.001" value="0.97"></label>
+          <div class="cap-result" id="cap-result">&mdash;</div>
+        </div>
+        <p class="fine">Stage the banks under an APFC relay &mdash; over-correction into lead forfeits the incentive (Comm. Circular 312).</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-review" class="tab">
+    <div class="card">
+      <h3>Flagged readings <span class="sub">low confidence, monotonicity, rate-limit and cross-register failures (&sect;7.2)</span></h3>
+      <div id="review-list"></div>
+    </div>
+  </section>
+
+  <section id="tab-alerts" class="tab">
+    <div class="card">
+      <h3>Alert log <span class="sub">business + data-gap rules from the alert catalogue (&sect;11.3); one firing per rule/meter/day</span></h3>
+      <div id="alerts-list"></div>
+    </div>
+  </section>
+
+  <section id="tab-config" class="tab">
+    <div class="card">
+      <h3>Active configuration <span class="sub">tariff.yaml + meters.yaml &mdash; regulatory numbers live here, never in code</span></h3>
+      <pre id="config-dump">loading&hellip;</pre>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

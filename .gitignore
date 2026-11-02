@@ -1,0 +1,5 @@
+# runtime state — regenerate with "Load demo data" / POST /api/simulate
+data/
+__pycache__/
+*.pyc
+.DS_Store
