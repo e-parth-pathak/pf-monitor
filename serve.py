@@ -3,12 +3,19 @@
 
     python3 serve.py              # http://127.0.0.1:8010/
     PORT=9000 python3 serve.py
-    HOST=0.0.0.0 python3 serve.py # LAN (write endpoints stay loopback-only)
+    HOST=0.0.0.0 python3 serve.py # LAN
 
 Implements the server side of the Power Factor Monitoring proposal:
 ingest + validation (§7), PF/tariff engine (§8), review queue (§7.4),
-self-observability alerts (§11.3). The meter simulator (§6 stand-in)
-is triggered from the UI or POST /api/simulate.
+self-observability alerts (§11.3), behind session authentication with
+two roles: admin (application owner) and viewer (end user).
+
+Access model:
+  - every page/API requires a logged-in session, except /login,
+    /static/* and the device-facing POST /api/ingest;
+  - POST /api/review and /api/simulate require the admin role;
+  - POST /api/ingest is for edge devices (no browser session) and
+    remains loopback-only until device credentials are introduced.
 """
 from __future__ import annotations
 
@@ -19,7 +26,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from pfmon import alerts, db, pipeline, simulator
+from pfmon import alerts, auth, db, pipeline, simulator
 from pfmon.configio import load_config
 from pfmon.engine import ENERGY_REGS, REGISTERS, capacitor_kvar, summarize
 from pfmon.simulator import IST
@@ -30,8 +37,10 @@ DB_PATH = os.path.join(BASE, "data", "pf-monitor.db")
 
 TARIFF, SETTINGS, METERS = load_config(BASE)
 CONN = db.connect(DB_PATH)
+auth.init(CONN)
 WRITE_LOCK = threading.Lock()
 
+SESSION_COOKIE = "pfsession"
 MIME = {".html": "text/html", ".js": "application/javascript",
         ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png"}
 
@@ -45,14 +54,16 @@ def series_for(meter_id: str) -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "pf-monitor/0.1"
+    server_version = "pf-monitor/0.2"
 
     # ------------------------------------------------------------- helpers
-    def _json(self, obj, code: int = 200) -> None:
+    def _json(self, obj, code: int = 200, headers: dict = None) -> None:
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
@@ -70,6 +81,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _redirect(self, to: str) -> None:
+        self.send_response(302)
+        self.send_header("Location", to)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
         if not length:
@@ -78,6 +95,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def _loopback(self) -> bool:
         return self.client_address[0] in ("127.0.0.1", "::1")
+
+    def _cookie_token(self) -> str:
+        raw = self.headers.get("Cookie") or ""
+        for part in raw.split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == SESSION_COOKIE:
+                return value
+        return ""
+
+    def _user(self):
+        return auth.session_user(CONN, self._cookie_token())
+
+    @staticmethod
+    def _set_cookie(token: str, max_age: int) -> dict:
+        return {"Set-Cookie":
+                f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; "
+                f"SameSite=Lax; Max-Age={max_age}"}
 
     def log_message(self, fmt, *args):  # quiet access log
         pass
@@ -88,10 +122,24 @@ class Handler(BaseHTTPRequestHandler):
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         route = url.path
 
-        if route == "/":
-            return self._file("index.html")
+        # ---- public routes
+        if route == "/login":
+            return self._file("login.html")
         if route.startswith("/static/"):
             return self._file(route[len("/static/"):])
+
+        # ---- everything else requires a session
+        user = self._user()
+        if user is None:
+            if route == "/":
+                return self._redirect("/login")
+            return self._json({"error": "authentication required"}, 401)
+
+        if route == "/":
+            return self._file("index.html")
+
+        if route == "/api/me":
+            return self._json(user)
 
         if route == "/api/meters":
             out = []
@@ -132,15 +180,29 @@ class Handler(BaseHTTPRequestHandler):
 
     # --------------------------------------------------------------- POST
     def do_POST(self):
-        if not self._loopback():
-            return self._json({"error": "write endpoints are loopback-only"}, 403)
         route = urlparse(self.path).path
         try:
             body = self._body()
         except json.JSONDecodeError:
             return self._json({"error": "invalid JSON"}, 400)
 
+        # ---- login (public)
+        if route == "/api/login":
+            user = auth.verify(CONN, str(body.get("username", "")),
+                               str(body.get("password", "")))
+            if user is None:
+                return self._json({"error": "invalid username or password"}, 401)
+            token = auth.create_session(CONN, user["username"])
+            db.audit(CONN, user["username"], "login")
+            CONN.commit()
+            return self._json(user, headers=self._set_cookie(
+                token, auth.SESSION_HOURS * 3600))
+
+        # ---- device-facing ingest: loopback-only, no browser session
         if route == "/api/ingest":
+            if not self._loopback():
+                return self._json({"error": "ingest is loopback-only "
+                                   "(device credentials not yet configured)"}, 403)
             payloads = body if isinstance(body, list) else [body]
             results = []
             with WRITE_LOCK:
@@ -149,11 +211,26 @@ class Handler(BaseHTTPRequestHandler):
                 CONN.commit()
             return self._json(results if isinstance(body, list) else results[0])
 
+        # ---- everything else requires a session
+        user = self._user()
+        if user is None:
+            return self._json({"error": "authentication required"}, 401)
+
+        if route == "/api/logout":
+            auth.destroy_session(CONN, self._cookie_token())
+            db.audit(CONN, user["username"], "logout")
+            CONN.commit()
+            return self._json({"ok": True}, headers=self._set_cookie("", 0))
+
+        # ---- admin-only actions
+        if user["role"] != "admin":
+            return self._json({"error": "admin role required"}, 403)
+
         if route == "/api/review":
             with WRITE_LOCK:
                 res = pipeline.review(CONN, int(body.get("id", 0)),
                                       body.get("action", ""),
-                                      body.get("reviewer", "web-ui"),
+                                      user["username"],
                                       body.get("value"))
                 CONN.commit()
             return self._json(res, 200 if res["result"] != "error" else 400)
@@ -165,12 +242,20 @@ class Handler(BaseHTTPRequestHandler):
                                            seed=int(body.get("seed", 42)))
                 n = alerts.evaluate(CONN, TARIFF, SETTINGS, METERS,
                                     now_ist(), series_for)
+            db.audit(CONN, user["username"], "simulate", after=stats)
+            CONN.commit()
             return self._json({"ok": True, "ingest": stats, "alerts_fired": n})
 
         self.send_error(404)
 
 
 def main():
+    created = auth.seed_defaults(CONN)
+    if created:
+        print("Seeded demo users (change before non-demo use):")
+        for username, password, role in created:
+            label = "super admin" if role == "admin" else "end user"
+            print(f"  {username} / {password}  ({label})")
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8010"))
     httpd = ThreadingHTTPServer((host, port), Handler)

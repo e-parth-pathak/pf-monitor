@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — PF Monitor</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  body { display: flex; min-height: 100vh; align-items: center; justify-content: center; }
+  .login-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 30px 34px; width: 340px; box-shadow: 0 8px 28px rgba(11,39,64,.10);
+  }
+  .login-card .brandrow { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+  .login-card h1 { font-size: 19px; margin: 0; color: var(--navy); }
+  .login-card .tagline { color: #5a6a79; margin-bottom: 18px; }
+  .login-card label { display: block; font-size: 12.5px; color: #45586a; margin: 12px 0 4px; }
+  .login-card input {
+    width: 100%; padding: 9px 10px; border: 1px solid var(--line);
+    border-radius: 7px; font-size: 14px;
+  }
+  .login-card input:focus { outline: 2px solid #0b4f8a44; border-color: var(--navy2); }
+  .login-card button {
+    width: 100%; margin-top: 18px; padding: 10px; font-size: 14.5px;
+  }
+  .login-error {
+    background: var(--badbg); color: var(--bad); border-radius: 7px;
+    padding: 8px 10px; font-size: 12.5px; margin-top: 12px; display: none;
+  }
+  .login-error.show { display: block; }
+  .demo-creds {
+    margin-top: 18px; border-top: 1px dashed var(--line); padding-top: 12px;
+    font-size: 11.5px; color: #5a6a79;
+  }
+  .demo-creds code { background: #f1f4f7; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <form class="login-card" id="login-form">
+    <div class="brandrow"><span class="logo">PF</span><h1>PF Monitor</h1></div>
+    <div class="tagline">Power-factor &amp; tariff monitoring</div>
+    <label for="u">Username</label>
+    <input id="u" name="username" autocomplete="username" autofocus required>
+    <label for="p">Password</label>
+    <input id="p" name="password" type="password" autocomplete="current-password" required>
+    <button class="primary" type="submit" id="login-btn">Sign in</button>
+    <div class="login-error" id="login-error"></div>
+    <div class="demo-creds">
+      Demo accounts &mdash; <strong>super admin:</strong> <code>admin</code> /
+      <code>admin123</code> &middot; <strong>end user:</strong>
+      <code>user</code> / <code>user123</code>
+    </div>
+  </form>
+<script>
+document.getElementById("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById("login-btn");
+  const err = document.getElementById("login-error");
+  btn.disabled = true; err.classList.remove("show");
+  try {
+    const r = await fetch("/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: document.getElementById("u").value.trim(),
+        password: document.getElementById("p").value,
+      }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+    location.href = "/";
+  } catch (ex) {
+    err.textContent = ex.message; err.classList.add("show");
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

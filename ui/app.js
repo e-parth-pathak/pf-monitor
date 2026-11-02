@@ -16,10 +16,16 @@ function toast(msg) {
 }
 async function api(path, opts) {
   const r = await fetch(path, opts);
+  if (r.status === 401) {               // session missing/expired
+    location.href = "/login";
+    throw new Error("authentication required");
+  }
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.error || r.statusText);
   return body;
 }
+let ME = null;                           // {username, role} after boot
+const isAdmin = () => ME && ME.role === "admin";
 const esc = (s) => String(s).replace(/[&<>"]/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const pf3 = (v) => (v == null ? "—" : v.toFixed(3));
@@ -57,15 +63,29 @@ async function runSimulation() {
 }
 $("#btn-simulate").addEventListener("click", runSimulation);
 window.runSimulation = runSimulation;
+$("#btn-logout").addEventListener("click", async () => {
+  try { await api("/api/logout", { method: "POST" }); } catch (e) { /* session gone */ }
+  location.href = "/login";
+});
 
 /* ------------------------------------------------------------ dashboard */
 async function boot() {
+  if (!ME) {
+    ME = await api("/api/me");
+    $("#whoami").innerHTML = `${esc(ME.username)}<span class="role">${
+      ME.role === "admin" ? "SUPER ADMIN" : "END USER"}</span>`;
+    $("#btn-simulate").classList.toggle("hidden", !isAdmin());
+  }
   meters = await api("/api/meters");
   const total = meters.reduce((a, m) => a + m.readings, 0);
   const pending = meters.reduce((a, m) => a + m.review_pending, 0);
   badge("#badge-review", pending);
   $("#dash-empty").classList.toggle("hidden", total > 0);
   $("#dash-body").classList.toggle("hidden", total === 0);
+  if (total === 0 && !isAdmin()) {
+    $("#dash-empty").querySelector("button").outerHTML =
+      '<p class="muted"><em>Ask the administrator to load data.</em></p>';
+  }
   renderPicker();
   if (total > 0) {
     if (!currentMeter) currentMeter = meters[0].meter_id;
@@ -197,6 +217,13 @@ async function loadReview() {
     $("#review-list").innerHTML = '<p class="muted">Review queue is empty.</p>';
     return;
   }
+  const actions = (r) => isAdmin()
+    ? `<td class="rowbtns">
+        <button onclick="adjudicate(${r.id},'confirm')">Confirm</button>
+        <button onclick="adjudicate(${r.id},'correct')">Correct…</button>
+        <button onclick="adjudicate(${r.id},'reject')">Reject</button>
+      </td>`
+    : '<td class="muted">read-only</td>';
   $("#review-list").innerHTML = `<table class="grid">
     <tr><th>Timestamp</th><th>Meter</th><th>Register</th><th>Value</th>
         <th>Conf.</th><th>Flag reason</th><th>Actions</th></tr>
@@ -205,14 +232,11 @@ async function loadReview() {
       <td class="num">${r.value.toLocaleString()}</td>
       <td class="num">${r.confidence != null ? r.confidence.toFixed(3) : "—"}</td>
       <td class="reason">${esc(r.flag_reason || "")}</td>
-      <td class="rowbtns">
-        <button onclick="adjudicate(${r.id},'confirm')">Confirm</button>
-        <button onclick="adjudicate(${r.id},'correct')">Correct…</button>
-        <button onclick="adjudicate(${r.id},'reject')">Reject</button>
-      </td></tr>`).join("")}
+      ${actions(r)}</tr>`).join("")}
   </table>
-  <p class="fine">In production each row shows the source meter image beside the
-  OCR output (§7.4); the simulator carries no images.</p>`;
+  <p class="fine">${isAdmin()
+    ? "In production each row shows the source meter image beside the OCR output (§7.4); the simulator carries no images."
+    : "Adjudication requires the super-admin role — flagged readings are shown read-only."}</p>`;
 }
 window.adjudicate = async function (id, action) {
   let value = null;
